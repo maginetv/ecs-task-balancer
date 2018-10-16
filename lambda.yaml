@@ -1,0 +1,286 @@
+---
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  Lambda functions balancing tasks across ECS Clusters.
+
+Parameters:
+
+  EnvironmentType:
+    Description: ''
+    Type: String
+    Default: devel
+    AllowedValues:
+      - devel
+      - test
+      - prod
+
+  ServiceName:
+    Description: The name of this service
+    Type: String
+    Default: ecs-taskbalancer
+    AllowedValues:
+      - ecs-taskbalancer
+
+  ArtifactBucketName:
+    Description: >-
+      Name of s3 bucket where artifacts are stored.
+    Type: String
+
+  ArtifactBucketKey:
+    Description: >-
+      Name of the s3 key for the lambda artifact.
+    Type: String
+
+  State:
+    Description: Enable or Disable running job
+    Type: String
+    Default: ENABLED
+    AllowedValues:
+      - ENABLED
+      - DISABLED
+
+  DrainTimeout:
+    Description: >-
+      This is the draining timeout after which we stop drainage on the instance
+      and activate it again. A higher value could potentially remove all tasks
+      from the instance. Acceptable values are b/w 0 and 60 seconds.
+    Type: Number
+    Default: 45
+    MinValue: 0
+    MaxValue: 60
+
+  DrainSleepTime:
+    Description: >-
+      This is the sleep time after every drainage of a container instance. A lower
+      value could potentially create many invocation calls to the ECS API and
+      would result in throttling. Acceptable values are b/w 10 and 30 seconds.
+    Type: Number
+    Default: 30
+    MinValue: 10
+    MaxValue: 30
+
+  DrainMaxInstances:
+    Description: >-
+      This is the maximum number of instances to drain during one instance of a
+      rebalancing invocation. Acceptable values are b/w 0 and 3.
+    Type: Number
+    Default: 2
+    MinValue: 0
+    MaxValue: 3
+
+  RebalanceMaxRetries:
+    Description: >-
+      This is the maximum number of retries b/w successive drainage to see if
+      rebalancing was successfully achieved. A higher value would try rebalancing
+      over and over again which would lead to more drainage on container
+      instances. Acceptable values are b/w 0 and 5.
+    Type: Number
+    Default: 3
+    MinValue: 0
+    MaxValue: 5
+
+  CoefficientOfVariationPercent:
+    Description: >-
+      The acceptable coefficient of variation percent above which rebalancing would
+      be triggered. Acceptable values are b/w 0 and 30.
+    Type: Number
+    Default: 20
+    MinValue: 0
+    MaxValue: 30
+
+  Frequency:
+    Description: How frequent to run lambda
+    Type: Number
+    Default: 20
+
+  FrequencyUnit:
+    Description: Unit of frequency
+    Type: String
+    Default: minutes
+    AllowedValues:
+      - minute
+      - minutes
+      - hour
+      - hours
+      - day
+      - days
+
+
+Metadata:
+
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Environment
+        Parameters:
+          - EnvironmentType
+      - Label:
+          default: Lambda Configuration
+        Parameters:
+          - ServiceName
+          - State
+          - ArtifactBucketName
+          - ArtifactBucketKey
+          - Frequency
+          - FrequencyUnit
+      - Label:
+          default: Task Balancer Configuration
+        Parameters:
+          - DrainTimeout
+          - DrainSleepTime
+          - DrainMaxInstances
+          - RebalanceMaxRetries
+          - CoefficientOfVariationPercent
+
+    ParameterLabels:
+      EnvironmentType:
+        default: Environment Type
+      ServiceName:
+        default: Service Name
+      ArtifactBucketName:
+        default: Artifact Bucket Name
+      ArtifactBucketKey:
+        default: Artifact Bucket Key
+      LambdaState:
+        default: State
+      DrainTimeout:
+        default: Drain Timeout Time
+      DrainSleepTime:
+        default: Drain Sleep Time
+      DrainMaxInstances:
+        default: Max instances to drain
+      RebalanceMaxRetries:
+        default: Max Rebalance Retries
+      CoefficientOfVariationPercent:
+        default: Coefficient Of Variation (Percent)
+      Frequency:
+        default: Frequency
+      FrequencyUnit:
+        default: Frequency Unit
+
+
+Mappings:
+
+  AWSRegionMap:
+    us-east-1:
+      AZsCount: '3'
+    us-east-2:
+      AZsCount: '3'
+    us-west-1:
+      AZsCount: '3'
+    us-west-2:
+      AZsCount: '3'
+    eu-west-1:
+      AZsCount: '3'
+    eu-west-2:
+      AZsCount: '2'
+    sa-east-1:
+      AZsCount: '3'
+    ap-southeast-1:
+      AZsCount: '2'
+    ap-southeast-2:
+      AZsCount: '3'
+    ap-northeast-1:
+      AZsCount: '3'
+    ap-northeast-2:
+      AZsCount: '2'
+    eu-central-1:
+      AZsCount: '3'
+    ca-central-1:
+      AZsCount: '2'
+    ap-south-1:
+      AZsCount: '2'
+    cn-north-1:
+      AZsCount: '2'
+
+
+
+Resources:
+
+
+  LambdaTaskBalancer:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: ECS Task Balancer.
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: 'python2.7'
+      MemorySize: 128
+      Timeout: 300
+      Handler: ecs_taskbalancer.main
+      Environment:
+        Variables:
+          DRAIN_SLEEP_TIME: !Ref DrainSleepTime
+          DRAIN_TIMEOUT: !Ref DrainTimeout
+          DRAIN_MAX_INSTANCES: !Ref DrainMaxInstances
+          REBALANCE_MAX_RETRY: !Ref RebalanceMaxRetries
+          COV_PERCENT: !Ref CoefficientOfVariationPercent
+      Code:
+        S3Bucket: !Ref ArtifactBucketName
+        S3Key: !Ref ArtifactBucketKey
+
+
+  LambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: !Sub 'lambda.${AWS::URLSuffix}'
+          Action:
+          - 'sts:AssumeRole'
+      Path: '/'
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+              - 'logs:CreateLogGroup'
+              - 'logs:CreateLogStream'
+              - 'logs:PutLogEvents'
+            Resource: !Sub 'arn:aws:logs:${AWS::Region}:*:*'
+          - Effect: Allow
+            Action:
+              - ecs:DescribeContainerInstances
+              - ecs:ListContainerInstances
+              - ecs:DescribeContainerInstances
+              - ecs:UpdateContainerInstancesState
+            Resource: !Sub 'arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:*/*'
+          - Effect: Allow
+            Action:
+              - ecs:ListClusters
+            Resource: '*'
+        PolicyName: LambdaECSTaskBalancerPolicy
+
+
+  EventsRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Invoke ECS Task Balancer lambda periodically"
+      ScheduleExpression: !Sub "rate(${Frequency} ${FrequencyUnit})"
+      State: !Ref State
+      Targets:
+      - Arn: !GetAtt LambdaTaskBalancer.Arn
+        Id: "LambdaECSTaskBalancerIdv1"
+
+
+  InvokeLambdaPermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Principal: !Sub events.${AWS::URLSuffix}
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt LambdaTaskBalancer.Arn
+      SourceArn: !GetAtt EventsRule.Arn
+
+
+Outputs:
+
+  LambdaTaskBalancerRoleArn:
+    Description: IAM Execution Role ARN for the Lambda Task Balancer Function.
+    Value: !GetAtt LambdaExecutionRole.Arn
+
+  LambdaTaskBalancerArn:
+    Description: LambdaTaskBalancer Arn
+    Value: !GetAtt LambdaTaskBalancer.Arn
