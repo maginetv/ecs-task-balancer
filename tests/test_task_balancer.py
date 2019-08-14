@@ -20,7 +20,8 @@ class TestTaskBalancer(object):
 
     @patch('aws.update_container_instance_draining')
     @patch('aws.get_container_instances')
-    def test_cluster_is_rebalanced_when_distribution_is_uneven(self, get_instances_mock, drain_mock):
+    @patch('aws.activate_instances_in_cluster')
+    def test_cluster_is_rebalanced_when_distribution_is_uneven(self, activate_mock, get_instances_mock, drain_mock):
         test_dataset = [15, 1, 0]
         get_instances_mock.return_value = [
             {
@@ -58,7 +59,8 @@ class TestTaskBalancer(object):
 
     @patch('aws.update_container_instance_draining')
     @patch('aws.get_container_instances')
-    def test_cluster_is_not_rebalanced_when_distribution_is_even(self, get_instances_mock, drain_mock):
+    @patch('aws.activate_instances_in_cluster')
+    def test_cluster_is_not_rebalanced_when_distribution_is_even(self, activate_mock, get_instances_mock, drain_mock):
         test_dataset = [15, 15, 15]
         get_instances_mock.return_value = [
             {
@@ -93,7 +95,8 @@ class TestTaskBalancer(object):
 
     @patch('aws.update_container_instance_draining')
     @patch('aws.get_container_instances')
-    def test_cluster_is_not_rebalanced_for_zero_or_single_tasks(self, get_instances_mock, drain_mock):
+    @patch('aws.activate_instances_in_cluster')
+    def test_cluster_is_not_rebalanced_for_zero_or_single_tasks(self, activate_mock, get_instances_mock, drain_mock):
         for test_dataset in [[0, 0, 0], [1, 0, 0]]:
             get_instances_mock.return_value = [
                 {
@@ -126,6 +129,27 @@ class TestTaskBalancer(object):
                 call(self.region, cluster_name=self.cluster, status=aws.STATUS_ACTIVE),
                 call(self.region, cluster_name=self.cluster, status=aws.STATUS_ACTIVE)
             ]
+        )
+
+        # No rebalancing required, so no  calls to drain the instance
+        drain_mock.assert_not_called()
+
+    @patch('aws.update_container_instance_draining')
+    @patch('aws.get_container_instances')
+    @patch('aws.activate_instances_in_cluster')
+    def test_cluster_does_not_rebalance_for_single_instance(self, activate_mock, get_instances_mock, drain_mock):
+        task_count = 3
+        get_instances_mock.return_value = [
+            {
+                "ec2InstanceId": "i-aaaaa",
+                "containerInstanceArn": "arn:aws:ecs:eu-west-1:000:container-instance/xxx",
+                "runningTasksCount": task_count,
+                "pendingTasksCount": 0
+            }
+        ]
+        ecs_taskbalancer.try_rebalancing_cluster(
+            self.region, self.cluster, self.sleep_time, self.drain_timeout,
+            self.drain_max_instances, self.max_retries, self.cov_percent
         )
 
         # No rebalancing required, so no  calls to drain the instance

@@ -61,3 +61,14 @@ def update_container_instance_draining(region,
         status=status
     )
     return resp["containerInstances"][0]
+
+
+def activate_instances_in_cluster(region, cluster_name):
+    instances = get_container_instances(
+        region, cluster_name, status=STATUS_DRAINING
+    )
+    for i in instances:
+        instance_arn = i["containerInstanceArn"]
+        update_container_instance_draining(
+            region, cluster_name, instance_arn, status=STATUS_ACTIVE
+        )

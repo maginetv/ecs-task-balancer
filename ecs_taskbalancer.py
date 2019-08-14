@@ -167,6 +167,12 @@ def try_rebalancing_cluster(region, cluster, sleep_time, drain_timeout,
     Drain only until `drain_max_instances` or `max_retries`.
     """
 
+    # For recovery
+    # Stop draining if any instance in this cluster is in draining state
+    log.info("Activating instances in cluster {}".format(cluster))
+    aws.activate_instances_in_cluster(region, cluster)
+    log.info("Activation Done!")
+
     # Keep track of number of instances drained
     # This should not exceed `drain_max_instances`
     instance_count = 0
@@ -180,12 +186,19 @@ def try_rebalancing_cluster(region, cluster, sleep_time, drain_timeout,
         # Get task distribution over instance for this cluster
         dist = get_num_task_distribution(region, cluster)
         dist_values = [d["num_tasks"] for d in dist]
-        if len(dist_values) == 0:
-            log.info("No task distribution available")
+        if len(dist_values) <= 1:
+            log.info(
+                "Only {} instance running in {}. Not Rebalancing. {}".format(
+                    len(dist_values), cluster, dist_values
+                )
+            )
             return
 
         if sum(dist_values) <= 1:
-            log.info("Only 0 or 1 task is running! Rebalancing not required")
+            log.info("Only {} task running in {}. Not Rebalancing {}".format(
+                    sum(dist_values), cluster, dist_values
+                )
+            )
             return
 
         # Keep recomputing mean and SD after every drainage
@@ -287,9 +300,19 @@ def main(event, context):
     log.info("Clusters {} Found".format(cluster_names))
 
     # Try rebalancing one cluster at a time
+    cluster_ex = None
     for cluster in cluster_names:
-        try_rebalancing_cluster(region, cluster, sleep_time, drain_timeout,
-                                drain_max_instances, max_retries, cov_percent)
+        try:
+            try_rebalancing_cluster(region, cluster, sleep_time,
+                                    drain_timeout, drain_max_instances,
+                                    max_retries, cov_percent)
+        except Exception as ex:
+            cluster_ex = ex
+            log.error("Captured error on balancing cluster {}".format(cluster))
+            logging.exception(str(ex))
+
+    if cluster_ex:
+        raise cluster_ex
 
 
 if __name__ == '__main__':
